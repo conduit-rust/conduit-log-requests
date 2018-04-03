@@ -11,7 +11,9 @@ use std::error::Error;
 use conduit::{Request, Response};
 use middleware::Middleware;
 
-pub struct LogRequests(pub log::LogLevel);
+pub use log::Level as LogLevel;
+
+pub struct LogRequests(pub LogLevel);
 
 struct LogStart(u64);
 
@@ -41,7 +43,7 @@ impl LogRequests {
     fn log_message(&self, req: &mut Request, start: u64, status: u32,
                    msg: Option<&Error>) {
         let LogRequests(level) = *self;
-        let level = if msg.is_some() {log::LogLevel::Error} else {level};
+        let level = if msg.is_some() {LogLevel::Error} else {level};
         log!(level, "{} [{}] {:?} {} - {}ms {}{}",
              req.remote_addr(),
              time::now().rfc3339(),
@@ -60,10 +62,10 @@ impl LogRequests {
 mod tests {
     extern crate conduit_test as test;
 
-    use {LogRequests};
+    use {LogLevel, LogRequests};
 
     use conduit::{Request, Response, Handler, Method};
-    use log::{Log, LogRecord};
+    use log::{Log, Metadata, Record};
     use log;
     use middleware;
     use std::error::Error;
@@ -76,11 +78,12 @@ mod tests {
     struct MyWriter(Mutex<ChanWriter>);
 
     impl Log for MyWriter {
-        fn enabled(&self, _: log::LogLevel, _: &str) -> bool { true }
-        fn log(&self, record: &LogRecord) {
+        fn enabled(&self, _: &Metadata) -> bool { true }
+        fn log(&self, record: &Record) {
             let MyWriter(ref inner) = *self;
-            (write!(inner.lock(), "{}", record.args)).unwrap();
+            (write!(inner.lock(), "{}", record.args())).unwrap();
         }
+        fn flush(&self) {}
     }
 
     #[test]
@@ -89,7 +92,7 @@ mod tests {
         let mut reader = ChanReader::new(receiver);
 
         let mut builder = middleware::MiddlewareBuilder::new(handler);
-        builder.add(LogRequests(log::LogLevel::Error));
+        builder.add(LogRequests(LogLevel::Error));
 
         task(builder, sender);
 
@@ -106,7 +109,7 @@ mod tests {
 
     fn task<H: Handler + 'static + Send>(handler: H, sender: Sender<Vec<u8>>) {
         Thread::spawn(move|| {
-            log::set_logger(Box::new(MyWriter(Mutex::new(ChanWriter::new(sender)))));
+            log::set_logger(&MyWriter(Mutex::new(ChanWriter::new(sender))));
             let mut request = test::MockRequest::new(Method::Get, "/foo");
             let _ = handler.call(&mut request);
         });
